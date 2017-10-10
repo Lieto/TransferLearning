@@ -31,6 +31,7 @@ def add_new_last_layer(base_model, nb_classes, args):
     x = GlobalAveragePooling2D()(x)
     x = Dense(args.fc_size, activation="relu")(x)
     predictions = Dense(nb_classes, activation="softmax")(x)
+    #model = Model(input=base_model.input, output=predictions)
     model = Model(inputs=base_model.input, outputs=predictions)
     return model
 
@@ -49,7 +50,7 @@ def setup_to_finetune(model, args):
     for layer in model.layers[args.nb_iv3_layers_to_freeze:]:
         layer.trainable = True
 
-    model.compile(optimizer=SGD(lr=0.001, momentum=0.9), loss="categorical_crossentropy", metrics=["accuracy"])
+    model.compile(optimizer=SGD(lr=0.0001, momentum=0.9), loss="categorical_crossentropy", metrics=["accuracy"])
 
 def plot_training(history):
 
@@ -69,24 +70,12 @@ def plot_training(history):
     plt.title("Training and validation loss")
     plt.show()
 
-def train(args):
-
-    nb_train_samples = get_nb_files(args.train_dir)
-    logging.info("Number of training samples: {}".format(nb_train_samples))
+def data_preparation(args):
 
     nb_classes = len(glob.glob(args.train_dir + "/*"))
-    logging.info("Number of classes: {}".format(nb_classes))
-
+    nb_train_samples = get_nb_files(args.train_dir)
     nb_val_samples = get_nb_files(args.val_dir)
-    logging.info("Number of validation samples: {}".format(nb_val_samples))
 
-    nb_epoch = int(args.nb_epoch)
-    logging.info("Number of epochs: {}".format(nb_epoch))
-
-    batch_size = int(args.batch_size)
-    logging.info("Batch size: {}".format(batch_size))
-
-    # data prep
     train_datagen = ImageDataGenerator(
         preprocessing_function=preprocess_input,
         rotation_range=30,
@@ -114,53 +103,50 @@ def train(args):
     )
 
     validation_generator = test_datagen.flow_from_directory(
-        args.train_dir,
+        args.val_dir,
         target_size=(args.im_width, args.im_height),
         batch_size=args.batch_size,
     )
 
-    # setup model
+    return train_generator, validation_generator, nb_classes, nb_train_samples, nb_val_samples
+
+def setup_model_to_transfer_learning(nb_classes):
     base_model = InceptionV3(weights='imagenet', include_top=False)
     model = add_new_last_layer(base_model, nb_classes, args)
 
     # transfer learning
     setup_to_transfer_learning(model, base_model)
 
+    return model
+
+def setup_model_to_finetune_learning(args):
+
+    setup_to_finetune(model, args)
+
+    return model
+
+
+
+def train(model, nb_train_samples, nb_val_samples, batch_size, nb_epoch):
+
     history_tl = model.fit_generator(
         train_generator,
         steps_per_epoch= int(nb_train_samples // batch_size),
         epochs=nb_epoch,
         validation_data=validation_generator,
-        validation_steps= nb_val_samples // batch_size,
-        class_weight="auto"
+        validation_steps= nb_val_samples // batch_size
     )
 
-    # fine-tuning
-    setup_to_finetune(model, args)
-
-    history_tl = model.fit_generator(
-        train_generator,
-        steps_per_epoch=nb_train_samples // batch_size,
-        epochs=nb_epoch,
-        validation_data=validation_generator,
-        validation_steps=nb_val_samples // batch_size,
-        class_weight="auto"
-    )
-
-    model.save(args.output_model_file)
-
-    if args.plot:
-        plot_training(history_tl)
+    return history_tl
 
 
-
-if __name__ == "__main__":
+def read_configuration():
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--train_dir", type=str, default="/home/deeplearning/data/train_dir")
-    parser.add_argument("--val_dir", type=str, default="/home/deeplearning/data/val_dir")
-    parser.add_argument("--nb_epoch", type=int, default=3)
-    parser.add_argument("--batch_size", type=int, default=3)
+    parser.add_argument("--train_dir", type=str, default="/media/kuoppves/My Passport/CatsAndDogs/train_dir")
+    parser.add_argument("--val_dir", type=str, default="/media/kuoppves/My Passport/CatsAndDogs/val_dir")
+    parser.add_argument("--nb_epoch", type=int, default=1)
+    parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--fc_size", type=int, default=1024)
     parser.add_argument("--nb_iv3_layers_to_freeze", type=int, default=172)
     parser.add_argument("--output_model_file", type=str, default="inceptionv3-ft.model")
@@ -170,8 +156,6 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    logging.basicConfig(level=logging.DEBUG)
-
     if args.train_dir is None or args.val_dir is None:
         parser.print_help()
         sys.exit(1)
@@ -180,4 +164,30 @@ if __name__ == "__main__":
         print("directories do not exist")
         sys.exit(1)
 
-    train(args)
+    return args
+
+
+
+if __name__ == "__main__":
+
+    logging.basicConfig(level=logging.DEBUG)
+
+    args = read_configuration()
+
+    train_generator, validation_generator, nb_classes, nb_train_samples, nb_val_samples  = data_preparation(args)
+
+    model = setup_model_to_transfer_learning(nb_classes)
+
+    history_tl = train(model, nb_train_samples, nb_val_samples, args.batch_size, args.nb_epoch)
+
+    model = setup_model_to_finetune_learning(args)
+
+    history_tl = train(model, nb_train_samples, nb_val_samples, args.batch_size, args.nb_epoch)
+
+    model.save(args.output_model_file)
+
+
+    if args.plot:
+        plot_training(history_tl)
+
+

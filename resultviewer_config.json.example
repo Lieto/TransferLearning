@@ -1,0 +1,11 @@
+{
+  "log_level": 10,
+  "zmq_pub_socket": "ipc:///tmp/resultviewer_pub.sock",
+  "listeners": {
+    "cat_detector": {
+      "socket": "ipc:///tmp/frameprovider_pub.sock",
+      "topic": "raw"
+    }
+  },
+  "model": "./inceptionv3-ft.model"
+}
